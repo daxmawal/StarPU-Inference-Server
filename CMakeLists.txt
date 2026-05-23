@@ -216,6 +216,34 @@ else()
   message(STATUS "hwloc found via CMake package")
 endif()
 
+if(NOT DEFINED CUDAToolkit_ROOT
+   AND DEFINED CUDA_TOOLKIT_ROOT_DIR
+   AND EXISTS "${CUDA_TOOLKIT_ROOT_DIR}")
+  set(CUDAToolkit_ROOT
+      "${CUDA_TOOLKIT_ROOT_DIR}"
+      CACHE PATH "CUDA toolkit root" FORCE)
+elseif(
+  NOT DEFINED CUDAToolkit_ROOT
+  AND DEFINED CMAKE_CUDA_COMPILER
+  AND EXISTS "${CMAKE_CUDA_COMPILER}")
+  get_filename_component(_starpu_cuda_bin_dir "${CMAKE_CUDA_COMPILER}"
+                         DIRECTORY)
+  get_filename_component(_starpu_cuda_root "${_starpu_cuda_bin_dir}" DIRECTORY)
+  if(EXISTS "${_starpu_cuda_root}")
+    set(CUDAToolkit_ROOT
+        "${_starpu_cuda_root}"
+        CACHE PATH "CUDA toolkit root" FORCE)
+  endif()
+endif()
+
+if(NOT DEFINED CUDA_TOOLKIT_ROOT_DIR
+   AND DEFINED CUDAToolkit_ROOT
+   AND EXISTS "${CUDAToolkit_ROOT}")
+  set(CUDA_TOOLKIT_ROOT_DIR
+      "${CUDAToolkit_ROOT}"
+      CACHE PATH "CUDA toolkit root for FindCUDA compatibility" FORCE)
+endif()
+
 # Optional: NVTX instrumentation (nsys --trace=nvtx)
 set(HAVE_NVTX OFF)
 find_package(CUDAToolkit QUIET)

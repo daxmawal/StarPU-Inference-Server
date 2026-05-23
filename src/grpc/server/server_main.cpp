@@ -1,3 +1,4 @@
+#include <ATen/Parallel.h>
 #include <fcntl.h>
 #include <hwloc.h>
 #include <starpu.h>
@@ -229,6 +230,7 @@ main(int argc, char* argv[]) -> int
   try {
     starpu_server::RuntimeConfig opts =
         handle_program_arguments({argv, static_cast<size_t>(argc)});
+    apply_libtorch_runtime_settings(opts);
     auto observability =
         std::make_shared<starpu_server::RuntimeObservability>();
     observability->tracer =

@@ -6,6 +6,10 @@
 
 #include "test_starpu_task_runner.hpp"
 
+namespace {
+starpu_server::testing::ScopedStarpuSilent g_starpu_silent{};
+}
+
 struct SomeException : public std::exception {
   [[nodiscard]] auto what() const noexcept -> const char* override
   {
@@ -16,11 +20,13 @@ struct SomeException : public std::exception {
 TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
 {
   auto probe = starpu_server::make_callback_probe();
+  starpu_server::CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunner::handle_job_exception(
       probe.job, SomeException{});
   EXPECT_TRUE(probe.called);
   EXPECT_TRUE(probe.results.empty());
   EXPECT_EQ(probe.latency, -1);
+  EXPECT_NE(capture.str().find("SomeException"), std::string::npos);
 }
 
 TEST_F(
@@ -72,10 +78,13 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
         probe.latency = latency;
       });
   probe.job = job;
+  starpu_server::CaptureStream capture{std::cerr};
   ASSERT_TRUE(queue_.push(job));
   queue_.shutdown();
   runner_->run();
   assert_failure_result(probe);
+  EXPECT_NE(
+      capture.str().find("Too many GPU model replicas"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
@@ -97,12 +106,16 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
       });
   probe.job = job;
 
+  starpu_server::CaptureStream capture{std::cerr};
   ASSERT_TRUE(queue_.push(job));
   queue_.shutdown();
 
   runner_->run();
 
   assert_failure_result(probe);
+  EXPECT_NE(
+      capture.str().find("Input count mismatch between job and slot"),
+      std::string::npos);
 }
 
 struct InvalidConfigParam {

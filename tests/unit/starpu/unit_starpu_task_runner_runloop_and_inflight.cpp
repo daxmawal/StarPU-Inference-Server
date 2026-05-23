@@ -39,12 +39,13 @@ struct BatchCollectorAfterBuildJobHookGuard {
   explicit BatchCollectorAfterBuildJobHookGuard(
       std::function<void(std::shared_ptr<starpu_server::InferenceJob>&)> hook)
   {
-    test_api::batch_collector_set_after_build_job_hook(std::move(hook));
+    test_api::BatchCollectorTestAdapter::set_after_build_job_hook(
+        std::move(hook));
   }
 
   ~BatchCollectorAfterBuildJobHookGuard()
   {
-    test_api::batch_collector_reset_after_build_job_hook();
+    test_api::BatchCollectorTestAdapter::reset_after_build_job_hook();
   }
 };
 
@@ -119,9 +120,9 @@ TEST(
 
 TEST_F(
     StarPUTaskRunnerFixture,
-    CollectBatchReturnsOnlyFirstWhenDynamicBatchingDisabled)
+    CollectBatchReturnsOnlyFirstWhenBatchingStrategyDisabled)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto first = make_job(
       0, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
@@ -137,8 +138,7 @@ TEST_F(
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchAggregatesCompatibleQueuedJobs)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -161,8 +161,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchAggregatesCompatibleQueuedJobs)
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchStoresNonMergeableJobAsPending)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -187,8 +186,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchStoresNonMergeableJobAsPending)
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchRespectsConfiguredMaximumBatchSize)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 2;
+  configure_adaptive_batching(2);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -215,8 +213,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchRespectsConfiguredMaximumBatchSize)
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchReturnsFirstJobOnlyWhenQueueIsNull)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 3;
+  configure_adaptive_batching(3);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -240,8 +237,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchReturnsFirstJobOnlyWhenQueueIsNull)
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchStopsWhenCoalesceDeadlineExpires)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 5;
+  configure_adaptive_batching(5);
   opts_.batching.batch_coalesce_timeout_ms = 5;
 
   auto first = make_job(
@@ -259,8 +255,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     CollectBatchAdaptsTargetWithQueuePressureByShrinkingThenGrowing)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
   opts_.congestion.enabled = true;
 
@@ -309,8 +304,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     CollectBatchShrinksAtMostOncePerCongestionTickUnderLowPressure)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
   opts_.congestion.enabled = true;
   opts_.congestion.tick_interval_ms = 1000;
@@ -336,10 +330,51 @@ TEST_F(
   }
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    CollectBatchFixedStrategyKeepsConfiguredBatchLimitUnderLowPressure)
+{
+  configure_fixed_batching(4);
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+  opts_.congestion.enabled = true;
+  opts_.congestion.tick_interval_ms = 10;
+  opts_.congestion.entry_horizon_ms = 40;
+  opts_.congestion.exit_horizon_ms = 30;
+
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto make_compatible_job = [this](int request_id) {
+    return make_job(
+        request_id,
+        {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+        {at::kFloat});
+  };
+
+  int request_id = 780;
+  for (int i = 0; i < 8; ++i) {
+    auto first = make_compatible_job(request_id++);
+    auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+        runner_.get(), first);
+    ASSERT_EQ(collected.size(), 1U);
+  }
+
+  auto first = make_compatible_job(request_id++);
+  auto second = make_compatible_job(request_id++);
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  EXPECT_EQ(collected.size(), 2U);
+}
+
 TEST_F(StarPUTaskRunnerFixture, CollectBatchTreatsInflightBacklogAsHighPressure)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
   opts_.batching.max_inflight_tasks = 4;
   opts_.congestion.enabled = true;
@@ -404,8 +439,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     CollectBatchUsesConfiguredMaximumWhenCongestionDetected)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
   opts_.congestion.enabled = true;
   opts_.congestion.tick_interval_ms = 20;
@@ -442,7 +476,7 @@ TEST_F(
       [] { return starpu_server::congestion::is_congested(); },
       std::chrono::milliseconds(1000), std::chrono::milliseconds(5)));
 
-  for (int i = 0; i < opts_.batching.max_batch_size - 1; ++i) {
+  for (int i = 0; i < opts_.batching.resolved_max_batch_size - 1; ++i) {
     ASSERT_TRUE(queue_.push(make_compatible_job(request_id++)));
   }
 
@@ -452,15 +486,14 @@ TEST_F(
 
   EXPECT_EQ(
       collected.size(),
-      static_cast<std::size_t>(opts_.batching.max_batch_size));
+      static_cast<std::size_t>(opts_.batching.resolved_max_batch_size));
 }
 
 TEST_F(
     StarPUTaskRunnerFixture,
     CollectBatchWaitsToFillWhenCongestedAndCoalesceTimeoutIsZero)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
   opts_.congestion.enabled = true;
   opts_.congestion.tick_interval_ms = 80;
@@ -508,14 +541,13 @@ TEST_F(
   EXPECT_TRUE(pushed_all.load(std::memory_order_acquire));
   EXPECT_EQ(
       collected.size(),
-      static_cast<std::size_t>(opts_.batching.max_batch_size));
+      static_cast<std::size_t>(opts_.batching.resolved_max_batch_size));
 }
 
 TEST_F(
     StarPUTaskRunnerFixture, CollectBatchWaitsForJobWhenQueueEmptyAndTimeoutSet)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 3;
+  configure_adaptive_batching(3);
   opts_.batching.batch_coalesce_timeout_ms = 100;
 
   auto first = make_job(
@@ -1000,6 +1032,7 @@ TEST_F(StarPUTaskRunnerFixture, RunFinalizesJobAfterExceptionRaisedBeforeSubmit)
   RunBeforeSubmitHookGuard hook_guard{
       [] { throw std::runtime_error("run loop injected failure"); }};
 
+  CaptureStream capture{std::cerr};
   runner_->run();
 
   EXPECT_TRUE(probe.called);
@@ -1016,6 +1049,7 @@ TEST_F(StarPUTaskRunnerFixture, RunFinalizesJobAfterExceptionRaisedBeforeSubmit)
       failure->message,
       "Unexpected exception while processing dequeued job: run loop injected "
       "failure");
+  EXPECT_NE(capture.str().find("run loop injected failure"), std::string::npos);
 }
 
 TEST_F(
@@ -1033,6 +1067,7 @@ TEST_F(
 
   RunBeforeSubmitHookGuard hook_guard{[] { throw 123; }};
 
+  CaptureStream capture{std::cerr};
   runner_->run();
 
   EXPECT_TRUE(probe.called);
@@ -1049,6 +1084,8 @@ TEST_F(
       failure->message,
       "Unexpected non-standard exception while processing dequeued job: "
       "Unknown non-standard exception");
+  EXPECT_NE(
+      capture.str().find("Unknown non-standard exception"), std::string::npos);
 }
 
 TEST_F(
@@ -1087,7 +1124,7 @@ TEST_F(
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
@@ -1103,17 +1140,19 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
     throw starpu_server::InferenceEngineException("test inference failure");
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("test inference failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
@@ -1129,17 +1168,19 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
     throw std::runtime_error("runtime failure");
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("runtime failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
@@ -1155,17 +1196,19 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
     throw std::logic_error("logic failure");
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("logic failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
@@ -1181,17 +1224,19 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
     throw std::bad_alloc();
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("std::bad_alloc"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
@@ -1214,6 +1259,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
     throw CustomStdException{};
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
@@ -1225,11 +1271,12 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(
       failure->message, "Unexpected std::exception: custom std exception");
+  EXPECT_NE(capture.str().find("custom std exception"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
@@ -1245,6 +1292,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
     throw 42;
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
@@ -1257,6 +1305,8 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
   EXPECT_EQ(
       failure->message,
       "Unexpected non-standard exception: Unknown non-standard exception");
+  EXPECT_NE(
+      capture.str().find("Unknown non-standard exception"), std::string::npos);
 }
 
 TEST_F(
@@ -1272,6 +1322,7 @@ TEST_F(
     throw 42;
   });
 
+  CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunnerTestAdapter::submit_job_or_handle_failure(
       runner_.get(), job, /*submission_id=*/4242, /*job_id=*/4242);
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -1285,11 +1336,13 @@ TEST_F(
   EXPECT_EQ(
       failure->message,
       "Unexpected non-standard exception: Unknown non-standard exception");
+  EXPECT_NE(
+      capture.str().find("Unknown non-standard exception"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto model_config = make_model_config(
       "submit_fail_model", {make_tensor_config("input0", {1}, at::kFloat)},
@@ -1323,6 +1376,7 @@ TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
   ASSERT_TRUE(queue_.push(second_probe.job));
   queue_.shutdown();
 
+  CaptureStream capture{std::cerr};
   runner_->run();
 
   EXPECT_TRUE(first_probe.called);
@@ -1334,11 +1388,12 @@ TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
   EXPECT_EQ(completed_jobs_.load(), 2U);
   EXPECT_EQ(queue_.size(), 0U);
   EXPECT_EQ(submit_override_calls.load(std::memory_order_relaxed), 2);
+  static_cast<void>(capture.str());
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
   opts_.verbosity = starpu_server::VerbosityLevel::Trace;
 
   constexpr int kRequestId = 123;
@@ -1358,6 +1413,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   });
 
   CaptureStream capture{std::cout};
+  CaptureStream capture_err{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
@@ -1366,6 +1422,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   EXPECT_NE(
       logs.find(std::format("(request {})", kRequestId)), std::string::npos);
   EXPECT_NE(logs.find("aggregated requests: 1"), std::string::npos);
+  EXPECT_NE(capture_err.str().find("trace guard"), std::string::npos);
 
   assert_failure_result(probe);
   EXPECT_EQ(queue_.size(), 0U);
@@ -1373,7 +1430,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
 
 TEST_F(StarPUTaskRunnerFixture, RunClearsOnCompleteWhenJobCancelled)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   bool callback_invoked = false;
   auto job = make_job(1, {torch::tensor({1.0F})});
@@ -1405,7 +1462,7 @@ TEST_F(StarPUTaskRunnerFixture, RunClearsOnCompleteWhenJobCancelled)
 
 TEST_F(StarPUTaskRunnerFixture, RunReleasesPendingSubJobsWhenJobCancelled)
 {
-  opts_.batching.dynamic_batching = false;
+  configure_disabled_batching();
 
   auto job = make_job(1, {torch::tensor({1.0F})});
   auto cancel_flag = std::make_shared<std::atomic<bool>>(true);

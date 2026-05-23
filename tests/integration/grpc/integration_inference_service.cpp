@@ -134,13 +134,13 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
   std::jthread thread([&]() {
-    const auto options =
-        starpu_server::GrpcServerOptions{address,
-                                         kMaxMessageSizeMiB * kMiB,
-                                         starpu_server::VerbosityLevel::Info,
-                                         "",
-                                         "",
-                                         ""};
+    const auto options = starpu_server::GrpcServerOptions{
+        address,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Silent,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
@@ -168,13 +168,13 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
   const std::vector<std::vector<int64_t>> expected_input_dims = {
       {kMaxBatchSize, 3, 224, 224}};
   std::jthread thread([&]() {
-    const auto options =
-        starpu_server::GrpcServerOptions{address,
-                                         kMaxMessageSizeMiB * kMiB,
-                                         starpu_server::VerbosityLevel::Info,
-                                         "",
-                                         "",
-                                         ""};
+    const auto options = starpu_server::GrpcServerOptions{
+        address,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Silent,
+        "",
+        "",
+        ""};
     const auto model_spec = starpu_server::GrpcModelSpec{
         .expected_input_types = expected_input_types,
         .expected_input_dims = expected_input_dims,
@@ -195,7 +195,9 @@ TEST(GrpcServer, StartAndStop)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
   starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
@@ -216,13 +218,13 @@ TEST(GrpcServer, RunGrpcServerSupportsDoubleStartStopCycle)
     std::vector<torch::Tensor> reference_outputs;
     std::unique_ptr<grpc::Server> server;
 
-    const auto options =
-        starpu_server::GrpcServerOptions{address,
-                                         kMaxMessageSizeMiB * kMiB,
-                                         starpu_server::VerbosityLevel::Info,
-                                         "",
-                                         "",
-                                         ""};
+    const auto options = starpu_server::GrpcServerOptions{
+        address,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Silent,
+        "",
+        "",
+        ""};
 
     std::jthread thread([&, options]() {
       starpu_server::RunGrpcServer(
@@ -283,11 +285,12 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
   const int port = ntohs(addr.sin_port);
 
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
+  ::testing::internal::CaptureStderr();
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
         endpoint,
         kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info,
+        starpu_server::VerbosityLevel::Silent,
         "",
         "",
         ""};
@@ -298,7 +301,11 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
   EXPECT_EQ(
       future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   future.get();
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_EQ(server, nullptr);
+  EXPECT_NE(
+      err.find("Failed to start gRPC server on " + endpoint),
+      std::string::npos);
 
   ::close(fd);
 }
@@ -332,11 +339,12 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
   const int port = ntohs(addr.sin_port);
 
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
+  ::testing::internal::CaptureStderr();
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
         endpoint,
         kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info,
+        starpu_server::VerbosityLevel::Silent,
         "",
         "",
         ""};
@@ -353,7 +361,11 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
   EXPECT_EQ(
       future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   future.get();
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_EQ(server, nullptr);
+  EXPECT_NE(
+      err.find("Failed to start gRPC server on " + endpoint),
+      std::string::npos);
 
   ::close(fd);
 }
@@ -405,13 +417,13 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  const auto options =
-      starpu_server::GrpcServerOptions{address,
-                                       kMaxMessageSizeMiB * kMiB,
-                                       starpu_server::VerbosityLevel::Info,
-                                       "",
-                                       "",
-                                       ""};
+  const auto options = starpu_server::GrpcServerOptions{
+      address,
+      kMaxMessageSizeMiB * kMiB,
+      starpu_server::VerbosityLevel::Silent,
+      "",
+      "",
+      ""};
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
@@ -454,13 +466,13 @@ TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForRepositoryIndex)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  const auto options =
-      starpu_server::GrpcServerOptions{address,
-                                       kMaxMessageSizeMiB * kMiB,
-                                       starpu_server::VerbosityLevel::Info,
-                                       "",
-                                       "",
-                                       ""};
+  const auto options = starpu_server::GrpcServerOptions{
+      address,
+      kMaxMessageSizeMiB * kMiB,
+      starpu_server::VerbosityLevel::Silent,
+      "",
+      "",
+      ""};
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
@@ -502,13 +514,13 @@ TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForModelStreamInfer)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  const auto options =
-      starpu_server::GrpcServerOptions{address,
-                                       kMaxMessageSizeMiB * kMiB,
-                                       starpu_server::VerbosityLevel::Info,
-                                       "",
-                                       "",
-                                       ""};
+  const auto options = starpu_server::GrpcServerOptions{
+      address,
+      kMaxMessageSizeMiB * kMiB,
+      starpu_server::VerbosityLevel::Silent,
+      "",
+      "",
+      ""};
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
@@ -550,13 +562,13 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  const auto options =
-      starpu_server::GrpcServerOptions{address,
-                                       kMaxMessageSizeMiB * kMiB,
-                                       starpu_server::VerbosityLevel::Info,
-                                       "",
-                                       "",
-                                       ""};
+  const auto options = starpu_server::GrpcServerOptions{
+      address,
+      kMaxMessageSizeMiB * kMiB,
+      starpu_server::VerbosityLevel::Silent,
+      "",
+      "",
+      ""};
 
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;
@@ -637,13 +649,13 @@ TEST(GrpcServer, StopServerWhileHandlingConcurrentLoad)
   constexpr int kClientThreads = 8;
   constexpr int kRequestsPerThread = 20;
 
-  const auto options =
-      starpu_server::GrpcServerOptions{address,
-                                       kMaxMessageSizeMiB * kMiB,
-                                       starpu_server::VerbosityLevel::Info,
-                                       "",
-                                       "",
-                                       ""};
+  const auto options = starpu_server::GrpcServerOptions{
+      address,
+      kMaxMessageSizeMiB * kMiB,
+      starpu_server::VerbosityLevel::Silent,
+      "",
+      "",
+      ""};
 
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;

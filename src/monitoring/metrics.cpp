@@ -479,11 +479,13 @@ init_metrics(int port) -> bool
         metrics_shutdown_once_flag(), [] { std::atexit(shutdown_metrics); });
 
 #ifndef STARPU_HAVE_NVML
+#if !defined(STARPU_TESTING)
     std::call_once(nvml_warning_flag(), [] {
       log_warning_critical(
           "NVML support is not available; GPU metrics collection is "
           "disabled.");
     });
+#endif
 #endif
 
     metrics_atomic().store(new_metrics, std::memory_order_release);

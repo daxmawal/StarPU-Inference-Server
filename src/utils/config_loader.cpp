@@ -21,6 +21,7 @@
 #include "config_loader_congestion.hpp"
 #include "config_loader_device.hpp"
 #include "config_loader_io.hpp"
+#include "config_loader_libtorch.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 
@@ -86,8 +87,8 @@ validate_required_keys(const YAML::Node& root)
       "inputs",
       "outputs",
       "pool_size",
-      "max_batch_size",
-      "batch_coalesce_timeout_ms"};
+      "batch_coalesce_timeout_ms",
+      "batching_strategy"};
   std::vector<std::string> missing_keys;
   missing_keys.reserve(required_keys.size());
   for (const auto& key : required_keys) {
@@ -125,6 +126,7 @@ validate_allowed_keys(const YAML::Node& root)
           "model",
           "model_name",
           "starpu_env",
+          "libtorch",
           "device_ids",
           "group_cpu_by_numa",
           "gpu_model_replication",
@@ -136,8 +138,9 @@ validate_allowed_keys(const YAML::Node& root)
           "max_message_bytes",
           "max_queue_size",
           "max_inflight_tasks",
-          "max_batch_size",
-          "dynamic_batching",
+          "batching_strategy",
+          "adaptive_batching",
+          "fixed_batching",
           "congestion",
           "pool_size",
           "trace_enabled",
@@ -364,6 +367,7 @@ parse_config_file(
     parse_congestion(root, cfg);
     parse_generation_nodes(root, cfg);
     parse_device_nodes(root, cfg);
+    parse_libtorch(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
 // GCOVR_EXCL_START
@@ -395,11 +399,11 @@ finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
   try {
     validate_cross_field_invariants(cfg);
 
+    const int resolved_batch_size = resolved_batch_capacity(cfg.batching);
     if (max_message_bytes_configured) {
       if (cfg.model.has_value()) {
         const auto required_bytes = compute_model_message_bytes(
-            cfg.batching.max_batch_size, cfg.model->inputs, cfg.model->outputs,
-            0);
+            resolved_batch_size, cfg.model->inputs, cfg.model->outputs, 0);
         if (required_bytes > cfg.batching.max_message_bytes) {
           mark_config_invalid(
               cfg,
@@ -411,8 +415,7 @@ finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
       }
     } else {
       cfg.batching.max_message_bytes = compute_max_message_bytes(
-          cfg.batching.max_batch_size, cfg.model,
-          cfg.batching.max_message_bytes);
+          resolved_batch_size, cfg.model, cfg.batching.max_message_bytes);
     }
   }
   catch (const InvalidDimensionException& invalid_dimension) {

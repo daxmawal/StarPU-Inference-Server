@@ -73,7 +73,9 @@ TEST(E2ERegression, QueueFullUnderConcurrentLoadReturnsResourceExhausted)
   auto reference_outputs = build_reference_outputs(model);
 
   starpu_server::InferenceQueue queue(/*max_size=*/1);
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
   const std::string address = "127.0.0.1:" + std::to_string(server.port);
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());

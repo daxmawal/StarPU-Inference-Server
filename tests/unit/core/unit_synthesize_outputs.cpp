@@ -222,9 +222,13 @@ TEST(LoadModelAndReferenceOutput, MetricsUseDefaultLabelOnFailure)
   opts.devices.use_cuda = true;
   opts.devices.ids = {0, 2};
 
+  CaptureStream capture{std::cerr};
   const auto result = load_model_and_reference_output(opts);
 
   EXPECT_FALSE(result.has_value());
+  EXPECT_NE(
+      capture.str().find("Failed to load model or run reference inference"),
+      std::string::npos);
 
   const auto metrics = get_metrics();
   ASSERT_NE(metrics, nullptr);
@@ -398,12 +402,16 @@ TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
       .type = at::kFloat,
   }};
 
+  CaptureStream capture_err{std::cerr};
   CaptureStream capture{std::cout};
   const auto result = load_model_and_reference_output(opts);
 
   EXPECT_TRUE(result.has_value());
   EXPECT_NE(
       capture.str().find("No usable output schema provided"),
+      std::string::npos);
+  EXPECT_NE(
+      capture_err.str().find("Output tensor 'bad_output' is missing dims"),
       std::string::npos);
 }
 

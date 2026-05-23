@@ -58,7 +58,10 @@ GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)).
 `gpu_model_replication` defaults to `per_device`, which is the recommended
 policy for LibTorch inference when the model is used read-only during
 `forward()`. Switch to `per_worker` only if your `forward()` can mutate shared
-model state.
+model state. When CPU workers are enabled, you can also tune LibTorch CPU
+threading with the `libtorch.intraop_threads` and
+`libtorch.interop_threads` YAML settings described in the
+[Server Configuration](./server_guide.md#cpu-threading-with-libtorch).
 
 ---
 

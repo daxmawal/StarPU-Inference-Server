@@ -136,9 +136,14 @@ TEST_F(CongestionMonitorTest, StartReturnsFalseWithoutQueue)
   starpu_server::congestion::Config cfg;
   cfg.enabled = true;
 
+  ::testing::internal::CaptureStderr();
   EXPECT_FALSE(starpu_server::congestion::start(nullptr, cfg));
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_FALSE(starpu_server::congestion::is_congested());
   EXPECT_FALSE(starpu_server::congestion::snapshot().has_value());
+  EXPECT_NE(
+      err.find("Congestion monitor disabled: missing inference queue"),
+      std::string::npos);
 }
 
 TEST_F(CongestionMonitorTest, SnapshotReturnsNulloptWhenStopped)

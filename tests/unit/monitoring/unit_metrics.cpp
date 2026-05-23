@@ -329,9 +329,12 @@ TEST(Metrics, RepeatedInitDoesNotAllocateRegistry)
   ASSERT_TRUE(init_metrics(0));
   auto first = get_metrics();
 
+  ::testing::internal::CaptureStderr();
   EXPECT_FALSE(init_metrics(0));
+  const std::string err = ::testing::internal::GetCapturedStderr();
   auto second = get_metrics();
   EXPECT_EQ(first, second);
+  EXPECT_NE(err.find("Metrics were previously initialized"), std::string::npos);
 
   shutdown_metrics();
   EXPECT_EQ(get_metrics(), nullptr);
@@ -351,8 +354,14 @@ TEST(Metrics, InitFailsWhenMetricsRegistryThrows)
     }
   } guard;
 
+  ::testing::internal::CaptureStderr();
   EXPECT_FALSE(init_metrics(0));
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_EQ(get_metrics(), nullptr);
+  EXPECT_NE(
+      err.find("Metrics initialization failed: forced metrics initialization "
+               "failure"),
+      std::string::npos);
 }
 
 TEST(Metrics, MetricsDestructionLogsRemovalFailure)
@@ -1044,12 +1053,17 @@ TEST(Metrics, InitializeThrowsWhenExposerRegisterFails)
     }
   };
 
+  ::testing::internal::CaptureStderr();
   EXPECT_THROW(
       MetricsRegistry registry(
           0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
           [] { return std::optional<double>{}; }, false,
           std::make_unique<ThrowingHandle>()),
       std::runtime_error);
+  const std::string err = ::testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      err.find("Failed to initialize metrics exposer: register failure"),
+      std::string::npos);
 }
 
 TEST(Metrics, WorkersMetricsViaGlobalWrappers)
@@ -1945,7 +1959,11 @@ TEST(MetricsRecorder, CreateMetricsRecorderReturnsNullWhenMetricsRegistryThrows)
     }
   } guard;
 
+  ::testing::internal::CaptureStderr();
   EXPECT_EQ(create_metrics_recorder(0), nullptr);
+  const auto err = ::testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      err.find("forced metrics initialization failure"), std::string::npos);
 }
 
 TEST(MetricsRegistry, IncrementTransferBytesSkipsZero)

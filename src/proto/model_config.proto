@@ -1116,16 +1116,18 @@ message ModelQueuePolicy
 //@@
 //@@.. cpp:var:: message ModelDynamicBatching
 //@@
-//@@   Dynamic batching configuration. These settings control how dynamic
-//@@   batching operates for the model.
+//@@   Batching strategy configuration for the legacy dynamic_batching
+//@@   scheduling block. These settings control how request batching
+//@@   operates for the model.
 //@@
 message ModelDynamicBatching
 {
   //@@  .. cpp:var:: int32 preferred_batch_size (repeated)
   //@@
-  //@@     Preferred batch sizes for dynamic batching. If a batch of one of
-  //@@     these sizes can be formed it will be executed immediately.  If
-  //@@     not specified a preferred batch size will be chosen automatically
+  //@@     Preferred execution batch sizes for this batching strategy. If a
+  //@@     batch of one of these sizes can be formed it will be executed
+  //@@     immediately. If not specified a preferred batch size will be chosen
+  //@@     automatically
   //@@     based on model and GPU characteristics.
   //@@
   repeated int32 preferred_batch_size = 1;
@@ -1140,15 +1142,15 @@ message ModelDynamicBatching
 
   //@@  .. cpp:var:: bool preserve_ordering
   //@@
-  //@@     Should the dynamic batcher preserve the ordering of responses to
+  //@@     Should the batching scheduler preserve the ordering of responses to
   //@@     match the order of requests received by the scheduler. Default is
   //@@     false. If true, the responses will be returned in the same order as
   //@@     the order of requests sent to the scheduler. If false, the responses
   //@@     may be returned in arbitrary order. This option is specifically
   //@@     needed when a sequence of related inference requests (i.e. inference
-  //@@     requests with the same correlation ID) are sent to the dynamic
-  //@@     batcher to ensure that the sequence responses are in the correct
-  //@@     order.
+  //@@     requests with the same correlation ID) are sent through this
+  //@@     batching strategy to ensure that the sequence responses are returned
+  //@@     in the correct order.
   //@@
   bool preserve_ordering = 3;
 
@@ -1494,7 +1496,7 @@ message ModelSequenceBatching
 
     //@@    .. cpp:var:: int32 preferred_batch_size (repeated)
     //@@
-    //@@       Preferred batch sizes for dynamic batching of candidate
+    //@@       Preferred execution batch sizes for batching candidate
     //@@       sequences. If a batch of one of these sizes can be formed
     //@@       it will be executed immediately. If not specified a
     //@@       preferred batch size will be chosen automatically
@@ -1505,22 +1507,23 @@ message ModelSequenceBatching
     //@@    .. cpp:var:: uint64 max_queue_delay_microseconds
     //@@
     //@@       The maximum time, in microseconds, a candidate request
-    //@@       will be delayed in the dynamic batch scheduling queue to
-    //@@       wait for additional requests for batching. Default is 0.
+    //@@       will be delayed in the batching queue to wait for
+    //@@       additional requests for batching. Default is 0.
     //@@
     uint64 max_queue_delay_microseconds = 3;
 
     //@@    .. cpp:var:: bool preserve_ordering
     //@@
-    //@@       Should the dynamic batcher preserve the ordering of responses to
-    //@@       match the order of requests received by the scheduler. Default is
+    //@@       Should the batching scheduler preserve the ordering of responses
+    //@@       to match the order of requests received by the scheduler.
+    //@@       Default is
     //@@       false. If true, the responses will be returned in the same order
     //@@       as the order of requests sent to the scheduler. If false, the
     //@@       responses may be returned in arbitrary order. This option is
     //@@       specifically needed when a sequence of related inference requests
     //@@       (i.e. inference requests with the same correlation ID) are sent
-    //@@       to the dynamic batcher to ensure that the sequence responses are
-    //@@       in the correct order.
+    //@@       through this batching strategy to ensure that the sequence
+    //@@       responses are in the correct order.
     //@@
     //@@       When using decoupled models, setting this to true may block the
     //@@       responses from independent sequences from being returned to the
@@ -2049,8 +2052,9 @@ message ModelConfig
   {
     //@@    .. cpp:var:: ModelDynamicBatching dynamic_batching
     //@@
-    //@@       If specified, enables the dynamic-batching scheduling
-    //@@       policy. With dynamic-batching the scheduler may group
+    //@@       If specified, enables the request-batching scheduling
+    //@@       policy exposed by the legacy dynamic_batching block. The
+    //@@       scheduler may group
     //@@       together independent requests into a single batch to
     //@@       improve inference throughput.
     //@@

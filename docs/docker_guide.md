@@ -171,11 +171,13 @@ outputs:
 verbosity: 2
 address: 127.0.0.1:50051
 metrics_port: 9100
-max_batch_size: 32
+batching_strategy: adaptive
+adaptive_batching:
+  max_batch_size: 32
+  min_batch_size: 1
 max_queue_size: 100
 max_inflight_tasks: 256
 batch_coalesce_timeout_ms: 1000
-dynamic_batching: true
 sync: false
 use_cpu: true
 group_cpu_by_numa: true
@@ -184,6 +186,30 @@ use_cuda:
 gpu_model_replication: per_device
 pool_size: 12
 ```
+
+Fixed batching variant:
+
+```yaml
+name: bert_docker_fixed
+model: /workspace/models/bert_libtorch.pt
+inputs:
+  - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
+  - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
+outputs:
+  - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
+batching_strategy: fixed
+fixed_batching:
+  batch_size: 8
+max_queue_size: 100
+max_inflight_tasks: 256
+batch_coalesce_timeout_ms: 1000
+pool_size: 12
+```
+
+Use `fixed` when you want a stable target batch size rather than adaptive
+resizing under queue pressure. Keep the rest of the file identical to the
+adaptive example unless you also want to change worker placement or model
+paths.
 
 ---
 

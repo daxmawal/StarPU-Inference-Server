@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <starpu.h>
+#include <starpu_helper.h>
 #include <sys/socket.h>
 #include <torch/script.h>
 #include <unistd.h>
@@ -57,6 +58,48 @@ MakeTempModelPath(const char* base) -> std::filesystem::path
       temp_model_counter.fetch_add(1, std::memory_order_relaxed);
   return dir / (std::string(base) + "_" + std::to_string(sequence) + ".pt");
 }
+
+namespace starpu_server::testing {
+
+class ScopedStarpuSilent {
+ public:
+  explicit ScopedStarpuSilent(bool enabled = true)
+      : enabled_(enabled), previous_(enabled ? _starpu_silent : 0)
+  {
+    if (enabled_) {
+      if (const char* current = std::getenv("STARPU_SILENT");
+          current != nullptr) {
+        previous_env_ = std::string(current);
+      }
+      setenv("STARPU_SILENT", "1", 1);
+      _starpu_silent = 1;
+    }
+  }
+
+  ~ScopedStarpuSilent()
+  {
+    if (enabled_) {
+      if (previous_env_.has_value()) {
+        setenv("STARPU_SILENT", previous_env_->c_str(), 1);
+      } else {
+        unsetenv("STARPU_SILENT");
+      }
+      _starpu_silent = previous_;
+    }
+  }
+
+  ScopedStarpuSilent(const ScopedStarpuSilent&) = delete;
+  auto operator=(const ScopedStarpuSilent&) -> ScopedStarpuSilent& = delete;
+  ScopedStarpuSilent(ScopedStarpuSilent&&) = delete;
+  auto operator=(ScopedStarpuSilent&&) -> ScopedStarpuSilent& = delete;
+
+ private:
+  bool enabled_ = true;
+  int previous_ = 0;
+  std::optional<std::string> previous_env_;
+};
+
+}  // namespace starpu_server::testing
 
 namespace starpu_server {
 inline constexpr auto kTestGrpcServerStartTimeout = std::chrono::seconds(5);
@@ -362,7 +405,8 @@ inline auto
 start_test_grpc_server(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     std::vector<at::ScalarType> expected_input_types = {kValidInputSpec.dtype},
-    int port = 0) -> TestGrpcServer
+    int port = 0,
+    VerbosityLevel verbosity = VerbosityLevel::Silent) -> TestGrpcServer
 {
   const int resolved_port = port > 0 ? port : pick_unused_test_port();
   EXPECT_GT(resolved_port, 0);
@@ -375,14 +419,14 @@ start_test_grpc_server(
   handle.thread =
       std::jthread([&queue, &reference_outputs, resolved_port, &handle,
                     expected_input_types = std::move(expected_input_types),
-                    p = std::move(port_promise),
+                    verbosity, p = std::move(port_promise),
                     ready = std::move(server_ready_promise)]() mutable {
         const std::string address = std::format("127.0.0.1:{}", resolved_port);
         const auto options = GrpcServerOptions{
             address,
             32U * static_cast<std::size_t>(1024) *
                 static_cast<std::size_t>(1024),
-            VerbosityLevel::Info,
+            verbosity,
             "",
             "",
             ""};

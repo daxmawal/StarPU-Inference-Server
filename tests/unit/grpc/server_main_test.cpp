@@ -35,10 +35,23 @@
 #include "../../../src/starpu_task_worker/task_runner_internal.hpp"
 #include "support/grpc/server/server_main_test_api.hpp"
 #include "support/utils/batching_trace_logger_test_api.hpp"
+#include "test_batching_config.hpp"
+#include "test_helpers.hpp"
 
 namespace {
 
 using namespace ::starpu_server::testing::server_main_api;
+
+starpu_server::testing::ScopedStarpuSilent g_starpu_silent{};
+
+struct ScopedDeathTestStyle {
+  ScopedDeathTestStyle()
+  {
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  }
+};
+
+ScopedDeathTestStyle g_scoped_death_test_style{};
 
 struct ResetInjectedObservabilityNoexceptTag {
   using type = void (*)(
@@ -418,6 +431,60 @@ class ScopedEnvironmentVariableUnsetGuard {
  private:
   std::string name_;
   std::optional<std::string> previous_value_;
+};
+
+struct LibtorchThreadOverrideState {
+  int intraop_calls = 0;
+  int interop_calls = 0;
+  std::optional<int> last_intraop;
+  std::optional<int> last_interop;
+};
+
+auto
+libtorch_thread_override_state() -> LibtorchThreadOverrideState*&
+{
+  static LibtorchThreadOverrideState* state = nullptr;
+  return state;
+}
+
+void
+set_libtorch_intraop_threads_override_stub(int value)
+{
+  auto* state = libtorch_thread_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  ++state->intraop_calls;
+  state->last_intraop = value;
+}
+
+void
+set_libtorch_interop_threads_override_stub(int value)
+{
+  auto* state = libtorch_thread_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  ++state->interop_calls;
+  state->last_interop = value;
+}
+
+struct ScopedLibtorchThreadOverrides {
+  explicit ScopedLibtorchThreadOverrides(LibtorchThreadOverrideState& state)
+  {
+    libtorch_thread_override_state() = &state;
+    set_libtorch_intraop_threads_override_for_test() =
+        set_libtorch_intraop_threads_override_stub;
+    set_libtorch_interop_threads_override_for_test() =
+        set_libtorch_interop_threads_override_stub;
+  }
+
+  ~ScopedLibtorchThreadOverrides()
+  {
+    set_libtorch_interop_threads_override_for_test() = nullptr;
+    set_libtorch_intraop_threads_override_for_test() = nullptr;
+    libtorch_thread_override_state() = nullptr;
+  }
 };
 
 struct ResolvePythonExecutableOverrideState {
@@ -1621,7 +1688,9 @@ write_temp_config_file() -> TempFileGuard
   cfg << "outputs:\n";
   cfg << "  - { name: output0, data_type: TYPE_FP32, dims: [1, 2] }\n";
   cfg << "pool_size: 1\n";
-  cfg << "max_batch_size: 1\n";
+  cfg << "batching_strategy: adaptive\n";
+  cfg << "adaptive_batching:\n";
+  cfg << "  max_batch_size: 1\n";
   cfg << "batch_coalesce_timeout_ms: 0\n";
   cfg.close();
 
@@ -1792,7 +1861,7 @@ TEST(ServerMainArgs, HandleProgramArgumentsParsesLongConfigFlag)
   ASSERT_TRUE(cfg.model.has_value());
   EXPECT_EQ(cfg.model->inputs.size(), 1U);
   EXPECT_EQ(cfg.model->outputs.size(), 1U);
-  EXPECT_EQ(cfg.batching.max_batch_size, 1);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 1);
 }
 
 TEST(ServerMainArgs, HandleProgramArgumentsParsesShortConfigFlag)
@@ -1885,12 +1954,14 @@ TEST(ServerMainArgs, HandleProgramArgumentsReportsInvalidLoadedConfig)
   const std::array<const char*, 3> argv{
       "starpu_server", "--config", config_path.c_str()};
 
+  OStreamCapture capture_err(std::cerr);
   EXPECT_THROW(
       { (void)handle_program_arguments({argv.data(), argv.size()}); },
       std::runtime_error);
 
   EXPECT_EQ(fatal_state.call_count, 1);
   EXPECT_EQ(fatal_state.message, "Invalid configuration file.\n");
+  EXPECT_NE(capture_err.str().find("Failed to load config"), std::string::npos);
 }
 
 TEST(
@@ -2097,6 +2168,7 @@ TEST(
   ThreadExceptionState state;
   ServerContext server_ctx;
   starpu_server::InferenceQueue queue(4);
+  OStreamCapture capture_err(std::cerr);
   ASSERT_FALSE(queue.is_shutdown());
   EXPECT_FALSE(server_ctx.stop_requested.load(std::memory_order_relaxed));
 
@@ -2120,6 +2192,11 @@ TEST(
   catch (...) {
     FAIL() << "Expected std::runtime_error.";
   }
+
+  EXPECT_NE(
+      capture_err.str().find(
+          "Unhandled exception escaped 'batching-thread' thread: std failure"),
+      std::string::npos);
 }
 
 TEST(
@@ -2129,6 +2206,7 @@ TEST(
   ThreadExceptionState state;
   ServerContext server_ctx;
   starpu_server::InferenceQueue queue(4);
+  OStreamCapture capture_err(std::cerr);
   ASSERT_FALSE(queue.is_shutdown());
   EXPECT_FALSE(server_ctx.stop_requested.load(std::memory_order_relaxed));
 
@@ -2151,6 +2229,11 @@ TEST(
   catch (...) {
     FAIL() << "Expected integer exception.";
   }
+
+  EXPECT_NE(
+      capture_err.str().find(
+          "Unhandled non-standard exception escaped 'signal-thread' thread."),
+      std::string::npos);
 }
 
 TEST(
@@ -2161,6 +2244,7 @@ TEST(
   ServerContext server_ctx;
   starpu_server::InferenceQueue queue(4);
   std::atomic<bool> hook_called{false};
+  OStreamCapture capture_err(std::cerr);
   ASSERT_FALSE(queue.is_shutdown());
   EXPECT_FALSE(server_ctx.stop_requested.load(std::memory_order_relaxed));
   {
@@ -2199,6 +2283,12 @@ TEST(
   catch (...) {
     FAIL() << "Expected std::runtime_error.";
   }
+
+  EXPECT_NE(
+      capture_err.str().find(
+          "Unhandled exception escaped 'grpc-server' thread: grpc startup "
+          "failure"),
+      std::string::npos);
 }
 
 TEST(
@@ -2363,9 +2453,13 @@ TEST(
   load_model_and_reference_output_override_for_test() = nullptr;
   run_warmup_override_for_test() = nullptr;
 
+  OStreamCapture capture_err(std::cerr);
   EXPECT_THROW(
       (void)prepare_models_and_warmup(opts, starpu),
       starpu_server::ModelLoadingException);
+  EXPECT_NE(
+      capture_err.str().find("Failed to load model or run reference inference"),
+      std::string::npos);
 }
 
 TEST(
@@ -2447,6 +2541,40 @@ TEST(ServerMainSchedulerResolution, UsesDefaultSchedulerWhenUnsetEverywhere)
   EXPECT_EQ(
       resolve_starpu_scheduler(opts),
       std::format("{} (default)", starpu_server::kDefaultStarpuScheduler));
+}
+
+TEST(ServerMainLibtorchSettings, AppliesConfiguredThreadCounts)
+{
+  LibtorchThreadOverrideState state;
+  const ScopedLibtorchThreadOverrides overrides(state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.libtorch.intraop_threads = 2;
+  opts.libtorch.interop_threads = 3;
+
+  apply_libtorch_runtime_settings(opts);
+
+  EXPECT_EQ(state.intraop_calls, 1);
+  EXPECT_EQ(state.interop_calls, 1);
+  ASSERT_TRUE(state.last_intraop.has_value());
+  ASSERT_TRUE(state.last_interop.has_value());
+  EXPECT_EQ(*state.last_intraop, 2);
+  EXPECT_EQ(*state.last_interop, 3);
+}
+
+TEST(ServerMainLibtorchSettings, SkipsUnsetThreadCounts)
+{
+  LibtorchThreadOverrideState state;
+  const ScopedLibtorchThreadOverrides overrides(state);
+
+  starpu_server::RuntimeConfig opts;
+
+  apply_libtorch_runtime_settings(opts);
+
+  EXPECT_EQ(state.intraop_calls, 0);
+  EXPECT_EQ(state.interop_calls, 0);
+  EXPECT_FALSE(state.last_intraop.has_value());
+  EXPECT_FALSE(state.last_interop.has_value());
 }
 
 TEST(ServerMainWorkerTypeLabel, ReturnsCpuLabelForCpuWorker)
@@ -2843,7 +2971,7 @@ TEST(
     ReportsGpuReplicationStartupReturnsWhenCudaDisabled)
 {
   starpu_server::RuntimeConfig opts;
-  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.verbosity = starpu_server::VerbosityLevel::Silent;
   opts.devices.use_cuda = false;
   opts.devices.ids = {0, 1};
 
@@ -2926,6 +3054,7 @@ TEST(
   ScopedWorkerStreamQueryOverride worker_query_guard;
 
   starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
   opts.devices.use_cuda = true;
   opts.devices.ids = {0, -1, 1};
   opts.devices.gpu_model_replication =
@@ -3278,11 +3407,15 @@ TEST(
 {
   signal_stop_notify_fd() = -1;
   ScopedSignalPipeForcedPipeFailure forced_failure;
+  OStreamCapture capture_err(std::cerr);
   SignalNotificationPipe signal_pipe;
 
   EXPECT_FALSE(signal_pipe.active());
   EXPECT_EQ(signal_pipe.read_fd(), -1);
   EXPECT_EQ(signal_stop_notify_fd(), -1);
+  EXPECT_NE(
+      capture_err.str().find("Failed to create stop-notification pipe"),
+      std::string::npos);
 }
 
 TEST(
@@ -3291,11 +3424,16 @@ TEST(
 {
   signal_stop_notify_fd() = -1;
   ScopedSignalPipeForcedSetNonBlockingFailure forced_failure;
+  OStreamCapture capture_err(std::cerr);
   SignalNotificationPipe signal_pipe;
 
   EXPECT_FALSE(signal_pipe.active());
   EXPECT_EQ(signal_pipe.read_fd(), -1);
   EXPECT_EQ(signal_stop_notify_fd(), -1);
+  EXPECT_NE(
+      capture_err.str().find("Failed to configure stop-notification pipe write "
+                             "end as non-blocking"),
+      std::string::npos);
 }
 
 TEST(ServerMainSignalNotificationPipe, SetNonBlockingReturnsFalseForNegativeFd)
@@ -3399,6 +3537,7 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
   std::vector<torch::Tensor> reference_outputs;
   starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
 
+  OStreamCapture capture_err(std::cerr);
   std::promise<void> done_promise;
   auto done_future = done_promise.get_future();
 
@@ -3467,6 +3606,7 @@ TEST(
   std::vector<torch::Tensor> reference_outputs;
   starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
 
+  OStreamCapture capture_err(std::cerr);
   std::promise<void> done_promise;
   auto done_future = done_promise.get_future();
 
@@ -3500,6 +3640,11 @@ TEST(
       << "launch_threads did not stop within timeout in polling fallback mode";
   EXPECT_NO_THROW(done_future.get());
   EXPECT_EQ(read_override_state.call_count, 0);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          "Failed to create stop-notification pipe; falling back to polling "
+          "signal flag: Too many open files"));
 
   signal_stop_requested_flag() = 0;
 }
@@ -3525,7 +3670,7 @@ TEST(
   opts.server_address = address;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 16;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 16);
   opts.name = "fallback_model_name";
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "configured_model_name";
@@ -3579,7 +3724,7 @@ TEST(
   rpc_ctx.set_deadline(
       std::chrono::system_clock::now() + std::chrono::seconds(2));
   inference::ModelMetadataRequest request;
-  request.set_name("client_requested_model");
+  request.set_name("configured_model_name");
   inference::ModelMetadataResponse response;
 
   const auto status = stub->ModelMetadata(&rpc_ctx, request, &response);
@@ -3650,7 +3795,7 @@ TEST(
   opts.verbosity = starpu_server::VerbosityLevel::Info;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 4;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 4);
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "shutdown_drain_model";
   opts.model->inputs = {
@@ -3683,9 +3828,11 @@ TEST(
   starpu_server::StarPUSetup starpu(opts);
   torch::jit::script::Module model_cpu("m");
   std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> reference_outputs;
+  std::vector<torch::Tensor> reference_outputs = {
+      torch::zeros({1, 2}, torch::dtype(torch::kFloat32))};
   starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
 
+  OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
   std::promise<void> done_promise;
   auto done_future = done_promise.get_future();
@@ -3754,6 +3901,9 @@ TEST(
   ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
       << "launch_threads did not stop within timeout in shutdown drain path";
   EXPECT_NO_THROW(done_future.get());
+  EXPECT_NE(
+      capture_err.str().find("forced submit failure for shutdown drain test"),
+      std::string::npos);
 
   EXPECT_NE(
       capture_out.str().find("Shutdown drain started: completed="),
@@ -3782,10 +3932,10 @@ TEST(
 
   starpu_server::RuntimeConfig opts;
   opts.server_address = address;
-  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.verbosity = starpu_server::VerbosityLevel::Silent;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 4;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 4);
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "drain_completed_model";
   opts.model->inputs = {
@@ -3828,6 +3978,7 @@ TEST(
       torch::zeros({1, 2}, torch::dtype(torch::kFloat32))};
   starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
 
+  OStreamCapture capture_err(std::cerr);
   std::promise<void> done_promise;
   auto done_future = done_promise.get_future();
 
@@ -3871,6 +4022,10 @@ TEST(
   ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
       << "launch_threads did not stop within timeout in completed drain path";
   EXPECT_NO_THROW(done_future.get());
+  EXPECT_NE(
+      capture_err.str().find("forced submit failure for completed>=total drain "
+                             "test"),
+      std::string::npos);
 
   EXPECT_GT(drain_state.entered_calls, 0);
   EXPECT_GT(drain_state.completed_reached_total_calls, 0);
@@ -3900,10 +4055,10 @@ TEST(
 
   starpu_server::RuntimeConfig opts;
   opts.server_address = address;
-  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.verbosity = starpu_server::VerbosityLevel::Silent;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 4;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 4);
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "drain_timeout_model";
   opts.model->inputs = {
@@ -4050,6 +4205,7 @@ TEST(
   std::vector<torch::Tensor> reference_outputs;
   starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
 
+  testing::internal::CaptureStderr();
   std::promise<void> done_promise;
   auto done_future = done_promise.get_future();
   std::jthread launch_thread([&]() {
@@ -4066,8 +4222,11 @@ TEST(
   ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
       << "launch_threads did not stop after gRPC startup failure";
   EXPECT_NO_THROW(done_future.get());
+  const std::string err = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(ctx.stop_requested.load(std::memory_order_relaxed));
   EXPECT_EQ(signal_stop_requested_flag(), 0);
+  EXPECT_NE(
+      err.find("Failed to start gRPC server on " + address), std::string::npos);
 
   signal_stop_requested_flag() = 0;
 }
@@ -5124,9 +5283,13 @@ TEST(
   const pid_t pid = spawn_sleeping_child(true);
   ASSERT_GT(pid, 0);
 
+  OStreamCapture capture_err(std::cerr);
   const auto exit_code = terminate_and_wait(pid);
   ASSERT_TRUE(exit_code.has_value());
   EXPECT_EQ(*exit_code, 128 + SIGKILL);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log("Plot generation timed out; terminating python3."));
 }
 
 TEST(ServerMainPlotProcess, RunPlotScriptReturnsNulloptWhenPythonNotFound)
@@ -5195,8 +5358,10 @@ TEST(ServerMainPlotProcess, RunPlotScriptReturnsNonZeroForMissingScript)
     summary_file << "timestamp_ms,latency_ms\n";
   }
 
+  testing::internal::CaptureStderr();
   const auto exit_code = run_plot_script(
       "/definitely/missing_plot_batch_summary.py", summary_path, output_path);
+  const std::string err = testing::internal::GetCapturedStderr();
   if (!resolve_python_executable().has_value()) {
     EXPECT_FALSE(exit_code.has_value());
     return;
@@ -5204,6 +5369,8 @@ TEST(ServerMainPlotProcess, RunPlotScriptReturnsNonZeroForMissingScript)
 
   ASSERT_TRUE(exit_code.has_value());
   EXPECT_NE(*exit_code, 0);
+  EXPECT_NE(
+      err.find("/definitely/missing_plot_batch_summary.py"), std::string::npos);
 }
 
 }  // namespace

@@ -199,12 +199,15 @@ TEST(BatchingTraceLoggerTest, ConfigureHandlesDirectoryCreationFailures)
   }
   const auto trace_path = conflicting_parent / "trace.json";
 
+  ::testing::internal::CaptureStderr();
   logger.configure(true, trace_path.string());
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_FALSE(logger.enabled());
   EXPECT_TRUE(
       starpu_server::testing::BatchingTraceLoggerTestAccessor::file_path(logger)
           .empty());
   EXPECT_FALSE(std::filesystem::exists(trace_path));
+  EXPECT_NE(err.find("Failed to create directory"), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(conflicting_parent, ec);
@@ -2030,9 +2033,11 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
   std::error_code ec;
   std::filesystem::remove_all(trace_path.parent_path(), ec);
 
+  ::testing::internal::CaptureStderr();
   const auto configured =
       starpu_server::testing::BatchingTraceLoggerTestAccessor::
           configure_summary_writer(logger, trace_path);
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_FALSE(configured);
   EXPECT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
                   summary_file_path(logger)
@@ -2041,6 +2046,8 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
       starpu_server::testing::BatchingTraceLoggerTestAccessor::summary_stream(
           logger)
           .is_open());
+  EXPECT_NE(
+      err.find("Failed to open batching summary file"), std::string::npos);
 }
 
 TEST(
@@ -2053,9 +2060,11 @@ TEST(
   std::error_code ec;
   std::filesystem::remove_all(trace_path.parent_path(), ec);
 
+  ::testing::internal::CaptureStderr();
   const auto configured =
       starpu_server::testing::BatchingTraceLoggerTestAccessor::
           configure_queue_metrics_writer(logger, trace_path);
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_FALSE(configured);
   EXPECT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
                   queue_metrics_path(logger)
@@ -2063,6 +2072,7 @@ TEST(
   EXPECT_FALSE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
                    queue_metrics_stream(logger)
                        .is_open());
+  EXPECT_NE(err.find("Failed to open queue metrics file"), std::string::npos);
 }
 
 TEST(BatchingTraceLoggerTest, BatchSummaryNoOpsWhenSummaryStreamClosed)

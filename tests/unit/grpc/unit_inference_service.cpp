@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <future>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -169,6 +170,15 @@ sum_counter_values_for_label(
     }
   }
   return sum;
+}
+
+template <typename Fn>
+auto
+capture_stderr(Fn&& fn) -> std::string
+{
+  starpu_server::CaptureStream capture{std::cerr};
+  std::forward<Fn>(fn)();
+  return capture.str();
 }
 }  // namespace
 
@@ -456,7 +466,7 @@ TEST(InferenceServiceImpl, ModelMetadataPopulatesInputsAndOutputs)
 
   grpc::ServerContext ctx;
   inference::ModelMetadataRequest req;
-  req.set_name("client_model");
+  req.set_name("server_model");
   req.set_version("v1");
   inference::ModelMetadataResponse reply;
 
@@ -605,7 +615,7 @@ TEST(InferenceServiceImpl, ModelConfigPopulatesConfig)
 
   grpc::ServerContext ctx;
   inference::ModelConfigRequest req;
-  req.set_name("client_model");
+  req.set_name("server_model");
   inference::ModelConfigResponse reply;
 
   auto status = service.ModelConfig(&ctx, &req, &reply);
@@ -1754,18 +1764,24 @@ TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyWhenAllUnnamed)
 
 TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyOnSizeMismatch)
 {
-  auto names = starpu_server::testing::InferenceServiceTestAccessor::
-      NormalizeNamesForTest(
-          std::vector<std::string>{"input0"}, 2, "input", "input");
-  EXPECT_TRUE(names.empty());
+  const auto err = capture_stderr([&]() {
+    auto names = starpu_server::testing::InferenceServiceTestAccessor::
+        NormalizeNamesForTest(
+            std::vector<std::string>{"input0"}, 2, "input", "input");
+    EXPECT_TRUE(names.empty());
+  });
+  EXPECT_NE(err.find("Configured input names count"), std::string::npos);
 }
 
 TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyWhenExpectedSizeZero)
 {
-  auto names = starpu_server::testing::InferenceServiceTestAccessor::
-      NormalizeNamesForTest(
-          std::vector<std::string>{"input0"}, 0, "input", "input");
-  EXPECT_TRUE(names.empty());
+  const auto err = capture_stderr([&]() {
+    auto names = starpu_server::testing::InferenceServiceTestAccessor::
+        NormalizeNamesForTest(
+            std::vector<std::string>{"input0"}, 0, "input", "input");
+    EXPECT_TRUE(names.empty());
+  });
+  EXPECT_NE(err.find("Configured input names count"), std::string::npos);
 }
 
 TEST(InferenceServiceImpl, NormalizeNamesFillsMissingEntries)
@@ -2115,14 +2131,17 @@ TEST(
 {
   std::atomic<bool> callback_invoked{false};
 
-  const bool terminal_marked = starpu_server::testing::
-      InferenceServiceTestAccessor::FinalizeSuccessfulCompletionForTest(
-          /*cancelled=*/false, /*terminal_marked=*/false,
-          /*callback_present=*/false, /*reply_present=*/true,
-          /*with_impl=*/true, &callback_invoked);
+  const auto err = capture_stderr([&]() {
+    const bool terminal_marked = starpu_server::testing::
+        InferenceServiceTestAccessor::FinalizeSuccessfulCompletionForTest(
+            /*cancelled=*/false, /*terminal_marked=*/false,
+            /*callback_present=*/false, /*reply_present=*/true,
+            /*with_impl=*/true, &callback_invoked);
 
-  EXPECT_TRUE(terminal_marked);
+    EXPECT_TRUE(terminal_marked);
+  });
   EXPECT_FALSE(callback_invoked.load(std::memory_order_acquire));
+  EXPECT_NE(err.find("Missing callback handle"), std::string::npos);
 }
 
 TEST(
@@ -2360,18 +2379,23 @@ TEST_F(
   };
   HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
 
-  service->HandleModelInferAsync(
-      &ctx, &request, &reply,
-      [&status_promise](grpc::Status status) {
-        status_promise.set_value(std::move(status));
-      },
-      std::make_shared<int>(1));
+  const auto err = capture_stderr([&]() {
+    service->HandleModelInferAsync(
+        &ctx, &request, &reply,
+        [&status_promise](grpc::Status status) {
+          status_promise.set_value(std::move(status));
+        },
+        std::make_shared<int>(1));
+  });
 
   ASSERT_EQ(status_future.wait_for(2s), std::future_status::ready);
   const auto status = status_future.get();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(), "Internal server error");
+  EXPECT_NE(
+      err.find("Unhandled exception in HandleModelInferAsync"),
+      std::string::npos);
 }
 
 TEST_F(
@@ -2388,18 +2412,23 @@ TEST_F(
   hooks.on_cancel_ready = [](const std::function<void()>&) { throw 123; };
   HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
 
-  service->HandleModelInferAsync(
-      &ctx, &request, &reply,
-      [&status_promise](grpc::Status status) {
-        status_promise.set_value(std::move(status));
-      },
-      std::make_shared<int>(1));
+  const auto err = capture_stderr([&]() {
+    service->HandleModelInferAsync(
+        &ctx, &request, &reply,
+        [&status_promise](grpc::Status status) {
+          status_promise.set_value(std::move(status));
+        },
+        std::make_shared<int>(1));
+  });
 
   ASSERT_EQ(status_future.wait_for(2s), std::future_status::ready);
   const auto status = status_future.get();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(), "Internal server error");
+  EXPECT_NE(
+      err.find("Unhandled non-std exception in HandleModelInferAsync"),
+      std::string::npos);
 }
 
 TEST_F(
@@ -2625,21 +2654,26 @@ TEST_F(
   };
   SubmitJobAsyncHooksGuard guard{std::move(hooks)};
 
-  auto status = service->submit_job_async(
-      inputs,
-      [](grpc::Status, std::vector<torch::Tensor>,
-         starpu_server::InferenceServiceImpl::LatencyBreakdown,
-         starpu_server::detail::TimingInfo,
-         std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {
-      },
-      {}, {}, starpu_server::MonotonicClock::now(), "", &failure_info);
+  const auto err = capture_stderr([&]() {
+    auto status = service->submit_job_async(
+        inputs,
+        [](grpc::Status, std::vector<torch::Tensor>,
+           starpu_server::InferenceServiceImpl::LatencyBreakdown,
+           starpu_server::detail::TimingInfo,
+           std::optional<
+               starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {},
+        {}, {}, starpu_server::MonotonicClock::now(), "", &failure_info);
 
-  ASSERT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Internal server error");
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+    EXPECT_EQ(status.error_message(), "Internal server error");
+  });
   ASSERT_TRUE(failure_info.has_value());
   EXPECT_EQ(failure_info->stage, "enqueue");
   EXPECT_EQ(failure_info->reason, "exception");
+  EXPECT_NE(
+      err.find("Unhandled exception while submitting inference job"),
+      std::string::npos);
 }
 
 TEST_F(
@@ -2655,21 +2689,26 @@ TEST_F(
   hooks.before_create_job = []() { throw 7; };
   SubmitJobAsyncHooksGuard guard{std::move(hooks)};
 
-  auto status = service->submit_job_async(
-      inputs,
-      [](grpc::Status, std::vector<torch::Tensor>,
-         starpu_server::InferenceServiceImpl::LatencyBreakdown,
-         starpu_server::detail::TimingInfo,
-         std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {
-      },
-      {}, {}, starpu_server::MonotonicClock::now(), "", &failure_info);
+  const auto err = capture_stderr([&]() {
+    auto status = service->submit_job_async(
+        inputs,
+        [](grpc::Status, std::vector<torch::Tensor>,
+           starpu_server::InferenceServiceImpl::LatencyBreakdown,
+           starpu_server::detail::TimingInfo,
+           std::optional<
+               starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {},
+        {}, {}, starpu_server::MonotonicClock::now(), "", &failure_info);
 
-  ASSERT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Internal server error");
+    ASSERT_FALSE(status.ok());
+    EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+    EXPECT_EQ(status.error_message(), "Internal server error");
+  });
   ASSERT_TRUE(failure_info.has_value());
   EXPECT_EQ(failure_info->stage, "enqueue");
   EXPECT_EQ(failure_info->reason, "unknown_exception");
+  EXPECT_NE(
+      err.find("Unhandled non-std exception while submitting inference job"),
+      std::string::npos);
 }
 
 TEST_F(
@@ -2697,8 +2736,11 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  const auto err = capture_stderr([&]() {
+    EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  });
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
+  EXPECT_NE(err.find("forced callback std exception"), std::string::npos);
 }
 
 TEST_F(
@@ -2730,8 +2772,11 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  const auto err = capture_stderr([&]() {
+    EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  });
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
+  EXPECT_NE(err.find("forced callback std exception"), std::string::npos);
 }
 
 TEST_F(
@@ -2763,8 +2808,11 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  const auto err = capture_stderr([&]() {
+    EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  });
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
+  EXPECT_NE(err.find("forced callback std exception"), std::string::npos);
 }
 
 TEST_F(
@@ -2792,7 +2840,9 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  capture_stderr([&]() {
+    EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
+  });
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
 }
 
@@ -3297,6 +3347,7 @@ TEST_F(
 
   std::promise<grpc::Status> status_promise;
   auto status_future = status_promise.get_future();
+  starpu_server::CaptureStream capture{std::cerr};
 
   service->HandleModelInferAsync(
       &ctx, &request, &reply, [&status_promise](grpc::Status status) {
@@ -3309,6 +3360,9 @@ TEST_F(
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(), "Internal server error");
+  EXPECT_NE(
+      capture.str().find("Unhandled exception in async inference completion"),
+      std::string::npos);
 }
 
 TEST_F(
@@ -3327,6 +3381,7 @@ TEST_F(
 
   std::promise<grpc::Status> status_promise;
   auto status_future = status_promise.get_future();
+  starpu_server::CaptureStream capture{std::cerr};
 
   service->HandleModelInferAsync(
       &ctx, &request, &reply, [&status_promise](grpc::Status status) {
@@ -3339,6 +3394,10 @@ TEST_F(
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(), "Internal server error");
+  EXPECT_NE(
+      capture.str().find("Unhandled non-std exception in async inference "
+                         "completion"),
+      std::string::npos);
 }
 
 TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)

@@ -156,6 +156,28 @@ struct VectorResizeSpecShim {
   std::size_t byte_count;
 };
 
+class BatchCollectorTestAdapter {
+ public:
+  static void set_after_build_job_hook(
+      std::function<void(std::shared_ptr<InferenceJob>&)> hook);
+  static void reset_after_build_job_hook();
+  static auto try_acquire_next_job(
+      BatchCollector* collector, bool enable_wait,
+      Clock::time_point coalesce_deadline) -> std::shared_ptr<InferenceJob>;
+  static auto is_batching_done(const BatchCollector* collector) -> bool;
+  static auto should_abort_inflight_wait(const BatchCollector* collector)
+      -> bool;
+  static void disable_prepared_job_sync(BatchCollector* collector);
+  static void set_queue(BatchCollector* collector, InferenceQueue* queue);
+  static auto get_queue(const BatchCollector* collector) -> InferenceQueue*;
+  static void set_batching_done_ptr(
+      BatchCollector* collector, bool* batching_done);
+  static void set_batching_done_value(
+      BatchCollector* collector, bool batching_done);
+  static void set_pending_job(
+      BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
+};
+
 void validate_tensor_against_prototype(
     const torch::Tensor& tensor, const torch::Tensor& prototype);
 void validate_prototype_tensor(const torch::Tensor& tensor);
@@ -167,10 +189,6 @@ auto batch_size_from_inputs(const std::vector<torch::Tensor>& inputs)
 auto resolve_batch_size_for_job(
     const RuntimeConfig* opts,
     const std::shared_ptr<InferenceJob>& job) -> int64_t;
-
-void batch_collector_set_after_build_job_hook(
-    std::function<void(std::shared_ptr<InferenceJob>&)> hook);
-void batch_collector_reset_after_build_job_hook();
 
 auto cuda_copy_batch_create(bool enable) -> void*;
 void cuda_copy_batch_destroy(void* batch);
@@ -198,33 +216,6 @@ auto slot_manager_validate_batch_and_copy_inputs(
     SlotManager* slot_manager, const std::shared_ptr<InferenceJob>& job,
     int64_t batch, InputSlotPool* input_pool, int input_slot,
     OutputSlotPool* output_pool, int output_slot) -> int64_t;
-auto batch_collector_job_sample_size(
-    const BatchCollector* collector,
-    const std::shared_ptr<InferenceJob>& job) -> int64_t;
-auto batch_collector_exceeds_sample_limit(
-    const BatchCollector* collector, int64_t accumulated_samples,
-    const std::shared_ptr<InferenceJob>& job, int64_t max_samples_cap) -> bool;
-auto batch_collector_try_acquire_next_job(
-    BatchCollector* collector, bool enable_wait,
-    Clock::time_point coalesce_deadline) -> std::shared_ptr<InferenceJob>;
-auto batch_collector_should_hold_job(
-    const std::shared_ptr<InferenceJob>& candidate,
-    const std::shared_ptr<InferenceJob>& reference,
-    const std::optional<int>& target_worker) -> bool;
-auto batch_collector_is_batching_done(const BatchCollector* collector) -> bool;
-auto batch_collector_should_abort_inflight_wait(const BatchCollector* collector)
-    -> bool;
-void batch_collector_disable_prepared_job_sync(BatchCollector* collector);
-void batch_collector_set_queue(
-    BatchCollector* collector, InferenceQueue* queue);
-auto batch_collector_get_queue(const BatchCollector* collector)
-    -> InferenceQueue*;
-void batch_collector_set_batching_done_ptr(
-    BatchCollector* collector, bool* batching_done);
-void batch_collector_set_batching_done_value(
-    BatchCollector* collector, bool batching_done);
-void batch_collector_set_pending_job(
-    BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 }  // namespace testing
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP

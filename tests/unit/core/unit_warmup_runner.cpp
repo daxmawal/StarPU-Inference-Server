@@ -17,6 +17,7 @@
 #include "core/warmup.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "test_batching_config.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
@@ -294,8 +295,12 @@ TEST(WarmupRunnerEdgesTest, RunCapturesServerThreadException)
       },
       starpu_server::testing::WarmupThreadHook{});
 
+  starpu_server::CaptureStream capture{std::cerr};
   EXPECT_THROW(runner.run(1), std::runtime_error);
   EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
+  EXPECT_NE(
+      capture.str().find("[Warmup] Failed to enqueue job 0"),
+      std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunAppliesConfiguredInflightLimitBelowQueueCap)
@@ -337,6 +342,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenClientStaysPendingPastDeadline)
       starpu_server::testing::WarmupThreadHook{},
       [] { std::this_thread::sleep_for(10ms); });
 
+  starpu_server::CaptureStream capture{std::cerr};
   try {
     runner.run(1);
     FAIL() << "Expected timeout while waiting for client completion.";
@@ -346,6 +352,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenClientStaysPendingPastDeadline)
     EXPECT_NE(message.find("Warmup drain timeout"), std::string::npos);
     EXPECT_NE(message.find("client_done=false"), std::string::npos);
   }
+  EXPECT_NE(capture.str().find("Warmup drain timeout"), std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
@@ -362,6 +369,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
       [] { std::this_thread::sleep_for(600ms); },
       starpu_server::testing::WarmupThreadHook{});
 
+  starpu_server::CaptureStream capture{std::cerr};
   try {
     runner.run(1);
     FAIL() << "Expected timeout while draining completed warmup jobs.";
@@ -371,6 +379,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
     EXPECT_NE(message.find("Warmup drain timeout"), std::string::npos);
     EXPECT_NE(message.find("client_done=true"), std::string::npos);
   }
+  EXPECT_NE(capture.str().find("Warmup drain timeout"), std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
@@ -437,12 +446,14 @@ TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenComputedRequestsNonPositive)
   fixture.opts.batching.warmup_request_nb = -1;
   fixture.opts.batching.warmup_batches_per_worker =
       std::numeric_limits<int>::max();
-  fixture.opts.batching.max_batch_size = std::numeric_limits<int>::max() - 1;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(
+      fixture.opts, std::numeric_limits<int>::max() - 1);
 
   const int configured_batches =
       std::max(0, fixture.opts.batching.warmup_batches_per_worker);
   ASSERT_GT(configured_batches, 0);
-  const int max_batch_size = std::max(1, fixture.opts.batching.max_batch_size);
+  const int max_batch_size =
+      std::max(1, fixture.opts.batching.resolved_max_batch_size);
   const auto product =
       static_cast<long long>(configured_batches) * max_batch_size;
   ASSERT_GT(product, static_cast<long long>(std::numeric_limits<int>::max()));

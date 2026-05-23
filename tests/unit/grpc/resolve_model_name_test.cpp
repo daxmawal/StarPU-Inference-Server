@@ -32,8 +32,11 @@ class ResolveModelNameTest : public ::testing::Test {
 TEST_F(ResolveModelNameTest, ReturnsDefaultNameWhenClientRequestsDifferentModel)
 {
   auto service = make_service("server_default");
+  ::testing::internal::CaptureStderr();
   const auto resolved = service->resolve_model_name("client_provided");
+  const std::string err = ::testing::internal::GetCapturedStderr();
   EXPECT_EQ(resolved, "server_default");
+  EXPECT_NE(err.find("defaulting to server model"), std::string::npos);
 }
 
 TEST_F(

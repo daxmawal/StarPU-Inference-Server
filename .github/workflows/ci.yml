@@ -182,16 +182,86 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - &reset_reused_runner_submodules
+        name: Reset reused runner submodules
+        shell: bash
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/external"
+          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - &prepare_bundled_submodules
+        name: Prepare bundled submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          top_level_submodules=(
+            external/abseil-cpp
+            external/googletest
+            external/grpc
+            external/prometheus-cpp
+            external/protobuf
+            external/utf8_range
+            external/yaml-cpp
+          )
+          grpc_submodules=(
+            third_party/abseil-cpp
+            third_party/boringssl-with-bazel
+            third_party/cares/cares
+            third_party/envoy-api
+            third_party/googleapis
+            third_party/opencensus-proto
+            third_party/opentelemetry
+            third_party/protoc-gen-validate
+            third_party/re2
+            third_party/xds
+            third_party/zlib
+          )
+
+          git submodule sync --recursive
+          for attempt in 1 2 3; do
+            if git submodule update --init --jobs 4 -- "${top_level_submodules[@]}"; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+          git -C external/grpc submodule sync -- "${grpc_submodules[@]}"
+          for attempt in 1 2 3; do
+            if git -C external/grpc submodule update --init --jobs 4 -- "${grpc_submodules[@]}"; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+          git -C external/prometheus-cpp submodule sync -- 3rdparty/civetweb
+          for attempt in 1 2 3; do
+            if git -C external/prometheus-cpp submodule update --init --jobs 4 -- 3rdparty/civetweb; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
 
       - name: Configure and Build
         run: |
           cmake -S . -B build \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=ON \
@@ -211,11 +281,14 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - *reset_reused_runner_submodules
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build (Clang)
         run: |
@@ -225,6 +298,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -245,12 +319,15 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - *reset_reused_runner_submodules
+
       - name: Checkout base code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.sha }}
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build baseline (Clang)
         run: |
@@ -260,6 +337,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -281,11 +359,14 @@ jobs:
       CUDA_VISIBLE_DEVICES: ""
 
     steps:
+      - *reset_reused_runner_submodules
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build (ASan + UBSan)
         run: |
@@ -295,6 +376,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -322,11 +404,14 @@ jobs:
       CUDA_VISIBLE_DEVICES: ""
 
     steps:
+      - *reset_reused_runner_submodules
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build (TSan targeted)
         run: |
@@ -336,6 +421,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -360,11 +446,14 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - *reset_reused_runner_submodules
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Download build artifacts
         uses: actions/download-artifact@v8
@@ -398,11 +487,14 @@ jobs:
       CTEST_TIMEOUT_E2E_SECONDS: "600"
 
     steps:
+      - *reset_reused_runner_submodules
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Download build artifacts
         uses: actions/download-artifact@v8
@@ -538,7 +630,10 @@ jobs:
     env:
       PERF_SERVER_ADDR: "127.0.0.1:50062"
       PERF_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_gpu_only.yml"
+      PERF_BASELINE_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_baseline.yml"
+      PERF_FIXED_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_fixed_gpu_only.yml"
       PERF_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet.csv"
+      PERF_FIXED_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet_smoke.csv"
       PERF_EXPECTED_REQUESTS: "6300"
       PERF_MAX_THROUGHPUT_DROP_PCT: "10"
       PERF_MAX_SERVER_OVERALL_P95_REGRESSION_PCT: "15"
@@ -583,6 +678,16 @@ jobs:
 
           test -s "$PERF_MODEL_PATH"
 
+      - name: Prepare baseline perf config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git show \
+            "${{ github.event.pull_request.base.sha }}:ci/perf/resnet152_ci_perf_gpu_only.yml" \
+            > ci/perf/resnet152_ci_perf_baseline.yml
+          test -s ci/perf/resnet152_ci_perf_baseline.yml
+
       - name: Run baseline perf benchmark
         shell: bash
         run: |
@@ -590,7 +695,7 @@ jobs:
           bash scripts/run_perf_smoke.sh \
             --build-dir build-clang-baseline \
             --server "$PERF_SERVER_ADDR" \
-            --config "$PERF_SERVER_CONFIG" \
+            --config "$PERF_BASELINE_SERVER_CONFIG" \
             --schedule-csv "$PERF_SCHEDULE_CSV" \
             --output-dir perf-artifacts
 
@@ -605,6 +710,18 @@ jobs:
             --config "$PERF_SERVER_CONFIG" \
             --schedule-csv "$PERF_SCHEDULE_CSV" \
             --output-dir perf-artifacts
+
+      - name: Run fixed batching config smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash scripts/run_perf_smoke.sh \
+            --build-dir build-clang \
+            --server "$PERF_SERVER_ADDR" \
+            --config "$PERF_FIXED_SERVER_CONFIG" \
+            --schedule-csv "$PERF_FIXED_SCHEDULE_CSV" \
+            --output-dir perf-fixed-artifacts
 
       - name: Compare candidate perf against baseline
         shell: bash
@@ -634,4 +751,8 @@ jobs:
             build-clang/perf-artifacts/client.log
             build-clang/perf-artifacts/readiness.log
             build-clang/perf-artifacts/resnet152-summary.json
+            build-clang/perf-fixed-artifacts/server.log
+            build-clang/perf-fixed-artifacts/client.log
+            build-clang/perf-fixed-artifacts/readiness.log
+            build-clang/perf-fixed-artifacts/resnet152-summary.json
           if-no-files-found: ignore
